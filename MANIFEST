@@ -232,6 +232,7 @@ lib/PublicInbox/LeiDedupe.pm
 lib/PublicInbox/LeiEditSearch.pm
 lib/PublicInbox/LeiExportKw.pm
 lib/PublicInbox/LeiExternal.pm
+lib/PublicInbox/LeiF3.pm
 lib/PublicInbox/LeiFinmsg.pm
 lib/PublicInbox/LeiForgetExternal.pm
 lib/PublicInbox/LeiForgetMailSync.pm
@@ -357,6 +358,7 @@ lib/PublicInbox/WwwStatic.pm
 lib/PublicInbox/WwwStream.pm
 lib/PublicInbox/WwwText.pm
 lib/PublicInbox/Xapcmd.pm
+lib/PublicInbox/f3.h
 lib/PublicInbox/gcf2_libgit2.h
 sa_config/Makefile
 sa_config/README
@@ -500,6 +502,7 @@ t/lei-watch.t
 t/lei.t
 t/lei_dedupe.t
 t/lei_external.t
+t/lei_f3.t
 t/lei_lcat.t
 t/lei_mail_sync.t
 t/lei_overview.t
