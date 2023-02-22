@@ -405,16 +405,17 @@ static int rr_do(struct f3_req_res *rr, void *rbuf, size_t *rlen)
 	return recv_res(rr_send(rr, *rlen), rr, rbuf, rlen);
 }
 
-static void inode_acq(const struct f3_inode *inode)
+static pthread_mutex_t *inode_acq(const struct f3_inode *inode)
 {
+	/* TODO: consider a hash function (e.g hash64shift) here */
 	pthread_mutex_t *mtx = &mutexes[inode->vid & MUTEX_MASK].mtx;
 	int ret = pthread_mutex_lock(mtx);
 	assert(ret == 0);
+	return mtx;
 }
 
-static void inode_rel(const struct f3_inode *inode)
+static void inode_rel(pthread_mutex_t *mtx)
 {
-	pthread_mutex_t *mtx = &mutexes[inode->vid & MUTEX_MASK].mtx;
 	int ret = pthread_mutex_unlock(mtx);
 	assert(ret == 0);
 }
@@ -449,9 +450,9 @@ static void f3_getattr(fuse_req_t req, fuse_ino_t ino,
 	}
 	/* n.b. @fi is always NULL in current (3.10.x) libfuse */
 	if (!far.err) {
-		inode_acq(inode);
+		pthread_mutex_t *mtx = inode_acq(inode);
 		merge_rw_inode(&far, inode);
-		inode_rel(inode);
+		inode_rel(mtx);
 	}
 	far.err ? fuse_reply_err(req, far.err)
 		: fuse_reply_attr(req, &far.sb, f3.attr_timeout);
@@ -480,9 +481,10 @@ static int replace_fd(struct f3_inode *inode, int fd)
 	return err;
 }
 
-static int upgrade_rw(fuse_req_t req, struct f3_inode *inode)
+static int
+upgrade_rw(fuse_req_t req, struct f3_inode *inode, pthread_mutex_t *mtx)
 {
-	/* inode must be locked */
+	assert(mtx);
 	if (inode->rw == F3_RDONLY) { /* this doesn't touch SQLite */
 		struct f3_req_res rr;
 		int err = ro_init(&rr, inode->fd);
@@ -495,7 +497,7 @@ static int upgrade_rw(fuse_req_t req, struct f3_inode *inode)
 		if (!err)
 			err = replace_fd(inode, rr.sk[0]);
 		if (err) {
-			inode_rel(inode);
+			inode_rel(mtx);
 			fuse_reply_err(req, err);
 			return err;
 		}
@@ -536,7 +538,7 @@ static void f3_setattr(fuse_req_t req, fuse_ino_t ino, struct stat *sb,
 		fprintf(rr.wfp, "%cctime=%"PRId64,
 			0, ts2ms(&sb->st_ctim));
 
-	inode_acq(inode);
+	pthread_mutex_t *mtx = inode_acq(inode);
 	rr.send_fd = fl & FUSE_SET_ATTR_SIZE ? inode->fd : -1;
 	far.err = rr_do(&rr, &far, &rlen);
 	if (!far.err && rr.send_fd >= 0) {
@@ -544,7 +546,7 @@ static void f3_setattr(fuse_req_t req, fuse_ino_t ino, struct stat *sb,
 		far.err = replace_fd(inode, rr.sk[0]);
 		inode->rw = F3_DIRTY;
 	}
-	inode_rel(inode);
+	inode_rel(mtx);
 
 	far.err ? fuse_reply_err(req, far.err)
 		: fuse_reply_attr(req, &far.sb, f3.attr_timeout);
@@ -628,7 +630,7 @@ static int ref_inode(struct fuse_entry_param *e, const struct stat *sb,
 		struct f3_inode *cur_inode;
 
 		cur_inode = caa_container_of(cur, struct f3_inode, nd);
-		inode_acq(cur_inode);
+		pthread_mutex_t *mtx = inode_acq(cur_inode);
 		if (cur_inode->refcount) {
 			cur_inode->refcount++;
 			if (fi)
@@ -636,7 +638,7 @@ static int ref_inode(struct fuse_entry_param *e, const struct stat *sb,
 			to_free = inode;
 			inode = cur_inode;
 		}
-		inode_rel(cur_inode);
+		inode_rel(mtx);
 		if (!to_free) /* existing entry was invalid, replace it */
 			(void)cds_lfht_add_replace(f3.vid2inode, hash, vid_eq,
 							inode, &inode->nd);
@@ -655,8 +657,8 @@ static int ref_inode(struct fuse_entry_param *e, const struct stat *sb,
 static int fsync_inode(struct f3_inode *inode)
 {
 	int err = 0;
+	pthread_mutex_t *mtx = inode_acq(inode);
 
-	inode_acq(inode);
 	if (inode->rw == F3_DIRTY) {
 		struct f3_req_res rr;
 		size_t rlen = sizeof(err);
@@ -669,7 +671,7 @@ static int fsync_inode(struct f3_inode *inode)
 				err = replace_fd(inode, rr.sk[0]);
 		}
 	}
-	inode_rel(inode);
+	inode_rel(mtx);
 	return err;
 }
 
@@ -749,11 +751,10 @@ static void delete_inode(struct f3_inode *inode)
 
 static uint64_t unref_inode(struct f3_inode *inode, uint64_t n)
 {
-	int64_t rc;
+	pthread_mutex_t *mtx = inode_acq(inode);
+	int rc = --inode->refcount;
 
-	inode_acq(inode);
-	rc = --inode->refcount;
-	inode_rel(inode);
+	inode_rel(mtx);
 	if (rc) return rc;
 
 	rcu_read_lock();
@@ -842,11 +843,11 @@ f3_link(fuse_req_t req, fuse_ino_t ino, fuse_ino_t parent, const char *name)
 		fuse_reply_err(req, far.err);
 	} else {
 		uint64_t n;
+		pthread_mutex_t *mtx = inode_acq(inode);
 
-		inode_acq(inode);
 		n = ++inode->refcount;
 		merge_rw_inode(&far, inode);
-		inode_rel(inode);
+		inode_rel(mtx);
 		assert(n > 1);
 		e.attr = far.sb;
 		e.ino = (uintptr_t)inode;
@@ -1031,12 +1032,12 @@ static void f3_copy_file_range(fuse_req_t req, fuse_ino_t ino_in,
 	ssize_t n;
 	int src_fd = (int)fi_in->fh;
 	int dst_fd = (int)fi_out->fh;
+	pthread_mutex_t *mtx = inode_acq(dst);
 
-	inode_acq(dst);
-	if (upgrade_rw(req, dst)) return;
+	if (upgrade_rw(req, dst, mtx)) return;
 	n = copy_file_range(src_fd, &off_in, dst_fd, &off_out, len, flags);
 	dst->rw = F3_DIRTY;
-	inode_rel(dst);
+	inode_rel(mtx);
 	n < 0 ? fuse_reply_err(req, errno) : fuse_reply_write(req, (size_t)n);
 }
 
@@ -1197,7 +1198,7 @@ f3_open(fuse_req_t req, fuse_ino_t ino, struct fuse_file_info *fi)
 	 * We always a read-only handle for non-empty files, upgrade_rw
 	 * happens lazily on first write.  Empty files are always R/W.
 	 */
-	inode_acq(inode);
+	pthread_mutex_t *mtx = inode_acq(inode);
 	if (inode->fd >= 0) {
 		fi->fh = (uint64_t)inode->fd;
 	} else {
@@ -1223,7 +1224,7 @@ f3_open(fuse_req_t req, fuse_ino_t ino, struct fuse_file_info *fi)
 			}
 		}
 	}
-	inode_rel(inode);
+	inode_rel(mtx);
 	err ? fuse_reply_err(req, err) : fuse_reply_open(req, fi);
 }
 
@@ -1245,8 +1246,8 @@ f3_release(fuse_req_t req, fuse_ino_t ino, struct fuse_file_info *fi)
 {
 	struct f3_inode *inode = f3_inode(ino);
 	int err = 0;
+	pthread_mutex_t *mtx = inode_acq(inode);
 
-	inode_acq(inode);
 	if (inode->rw == F3_DIRTY) {
 		struct f3_req_res rr;
 		size_t rlen = sizeof(err);
@@ -1259,7 +1260,7 @@ f3_release(fuse_req_t req, fuse_ino_t ino, struct fuse_file_info *fi)
 				err = replace_fd(inode, rr.sk[0]);
 		}
 	}
-	inode_rel(inode);
+	inode_rel(mtx);
 	fuse_reply_err(req, err);
 }
 
@@ -1293,12 +1294,12 @@ static void f3_write_buf(fuse_req_t req, fuse_ino_t ino,
 	out_buf.buf[0].fd = (int)fi->fh;
 	out_buf.buf[0].pos = off;
 
-	inode_acq(inode);
-	if (upgrade_rw(req, inode))
+	pthread_mutex_t *mtx = inode_acq(inode);
+	if (upgrade_rw(req, inode, mtx))
 		return;
 	n = fuse_buf_copy(&out_buf, in_buf, FUSE_BUF_SPLICE_MOVE);
 	inode->rw = F3_DIRTY;
-	inode_rel(inode);
+	inode_rel(mtx);
 	n < 0 ? fuse_reply_err(req, -n) : fuse_reply_write(req, (size_t)n);
 }
 
@@ -1325,14 +1326,14 @@ f3_fallocate(fuse_req_t req, fuse_ino_t ino, int mode,
 {
 	struct f3_inode *inode = f3_inode(ino);
 	int err = 0;
+	pthread_mutex_t *mtx = inode_acq(inode);
 
-	inode_acq(inode);
-	if (upgrade_rw(req, inode))
+	if (upgrade_rw(req, inode, mtx))
 		return;
 	if (fallocate((int)fi->fh, mode, offset, length))
 		err = errno;
 	inode->rw = F3_DIRTY;
-	inode_rel(inode);
+	inode_rel(mtx);
 	fuse_reply_err(req, err);
 }
 
