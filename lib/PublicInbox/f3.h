@@ -1056,6 +1056,7 @@ f3_opendir(fuse_req_t req, fuse_ino_t ino, struct fuse_file_info *fi)
 		fuse_reply_err(req, err);
 	} else {
 		fi->fh = -1;
+		fi->keep_cache = f3.keep_cache;
 #if FUSE_VERSION >= FUSE_MAKE_VERSION(3, 5)
 		fi->cache_readdir = f3.cache_readdir;
 #endif
