@@ -1347,7 +1347,7 @@ f3_getxattr(fuse_req_t req, fuse_ino_t ino, const char *name, size_t size)
 	size_t rlen = sizeof(fxr);
 
 	if (ino == FUSE_ROOT_ID) { /* show f3 internal vars */
-		char x[80];
+		char x[sizeof(F3_NS) + 75];
 		int n = INT_MAX;
 
 		if (!strcmp(name, F3_NS".entry_timeout"))
