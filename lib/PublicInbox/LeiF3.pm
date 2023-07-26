@@ -13,11 +13,12 @@ use PublicInbox::Spawn;
 my $dir = ($ENV{PERL_INLINE_DIRECTORY} //
 	die('BUG: PERL_INLINE_DIRECTORY unset')) . '/f3';
 my $F3_NS = 'lei';
-my $bin = "$dir/${F3_NS}fs.fuse";
+my $bin = "$dir/${F3_NS}.fuse";
 my ($srcpfx) = (__FILE__ =~ m!\A(.+/)[^/]+\z!);
 my @srcs = map { $srcpfx.$_ } qw(f3.h);
 my $xflags = ($ENV{CFLAGS} // '-Wall -ggdb3 -O0') . ' ' .
-	($ENV{LDFLAGS} // '-Wl,-O1 -Wl,--compress-debug-sections=zlib');
+	($ENV{LDFLAGS} // '-Wl,-O1 -Wl,--compress-debug-sections=zlib') .
+	qq{ -DF3_NS='"$F3_NS"'};
 
 sub xflags_chg () {
 	open my $fh, '<', "$dir/XFLAGS" or return 1;

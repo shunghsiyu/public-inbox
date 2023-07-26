@@ -8,7 +8,9 @@
  */
 
 /* another project may use this: */
-#define F3_NS "lei"
+#ifndef F3_NS
+#error F3_NS not defined
+#endif
 
 #define _GNU_SOURCE
 #define _FILE_OFFSET_BITS 64
@@ -126,7 +128,7 @@ static struct f3_data f3 = {
 };
 
 static const struct fuse_opt f3_opt[] = {
-	/* *-fd and root-vid are internal knobs */
+	/* *-fd and root-vid are internal knobs used by perl mount wrapper */
 	{ "reader-fd=%d", offsetof(struct f3_data, rfd) },
 	{ "worker-fd=%d", offsetof(struct f3_data, wfd) },
 	{ "root-vid=%"PRId64, offsetof(struct f3_data, vroot.vid) },
