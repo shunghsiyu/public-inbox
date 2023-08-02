@@ -12,7 +12,7 @@ if (my $err = $@) {
 	my $pkg_config = $ENV{PKG_CONFIG} // 'pkg-config';
 	like($err, qr/$pkg_config.*failed/, 'build failed');
 } else {
-	ok(-x "$ENV{PERL_INLINE_DIRECTORY}/f3/leifs.fuse",
+	ok(-x "$ENV{PERL_INLINE_DIRECTORY}/f3/lei.fuse",
 		'built executable');
 }
 
