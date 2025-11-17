@@ -25,7 +25,8 @@ use_ok 'PublicInbox::Filter::Base';
 	my $parts = [
 		Email::MIME->create(
 			attributes => {
-				content_type => 'text/xhtml; charset=UTF-8',
+				content_type => 'text/xhtml',
+				charset => 'UTF-8',
 				encoding => 'base64',
 			},
 			body => $html_body,
