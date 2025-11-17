@@ -13,7 +13,8 @@ ok($f, 'created PublicInbox::Filter::Mirror object');
 	my $parts = [
 		Email::MIME->create(
 			attributes => {
-				content_type => 'text/html; charset=UTF-8',
+				content_type => 'text/html',
+				charset => 'UTF-8',
 				encoding => 'base64',
 			},
 			body => $html_body,
